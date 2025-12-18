@@ -1,3 +1,4 @@
+use instant::Instant;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -217,6 +218,8 @@ pub struct PlayerState {
     pub realm_level: u32,  // 当前晋升等级（1=凡人境，2=炼气期，等）
     pub promotion_attempts: u32,  // 晋升尝试次数（用于计算失败率）
     pub history: Vec<String>,  // 历史记录
+    pub zero_pressure_streak: u32,  // 连续零压力天数
+    pub died_from_zero_pressure: bool,  // 是否因为零压力猝死
 }
 
 impl PlayerState {
@@ -232,6 +235,8 @@ impl PlayerState {
             realm_level: 1,
             promotion_attempts: 0,
             history: Vec::new(),
+            zero_pressure_streak: 0,
+            died_from_zero_pressure: false,
         }
     }
 
@@ -254,6 +259,20 @@ impl PlayerState {
 
     /// 检查猝死（基于压力值或技能点）
     pub fn check_death(&mut self) {
+        self.died_from_zero_pressure = false;
+
+        if self.pressure == 0 {
+            self.zero_pressure_streak = self.zero_pressure_streak.saturating_add(1);
+        } else {
+            self.zero_pressure_streak = 0;
+        }
+
+        if self.zero_pressure_streak >= 2 && rand::random::<f32>() < 0.15 {
+            self.is_alive = false;
+            self.died_from_zero_pressure = true;
+            return;
+        }
+
         // 如果技能点为负数，触发被开除
         if self.skills < 0 {
             self.is_alive = false;
@@ -276,8 +295,11 @@ impl PlayerState {
 
     /// 获取死亡提示文本
     pub fn get_death_message(&self) -> &'static str {
+        if self.died_from_zero_pressure {
+            return "你这样子天天都没有压力，跟咸鱼有什么分别？？？？";
+        }
         if self.skills < 0 {
-            return "你小子被开除了，啥也不会";
+            return "你小子被开除了，一个技能点都没有还他妈都来应聘，啥也不会";
         }
         match self.pressure {
             20..=29 => "脆弱的弟弟，这就死了",
@@ -350,7 +372,7 @@ pub struct GameState {
     pub current_week: u32,
     pub daily_events: Vec<DailyEvent>,
     pub weekly_events: Vec<WeeklyEvent>,
-    pub start_time: std::time::Instant,
+    pub start_time: Instant,
     pub today_event: DailyEvent,           // 保存当天事件，避免重复随机
     pub today_weekly_event: Option<WeeklyEvent>,  // 当周事件（如果有的话）
     pub event_chosen_today: bool,  // 今天是否已选择
@@ -375,7 +397,7 @@ impl GameState {
             current_week: 1,
             daily_events,
             weekly_events,
-            start_time: std::time::Instant::now(),
+            start_time: Instant::now(),
             today_event,
             today_weekly_event,
             event_chosen_today: false,

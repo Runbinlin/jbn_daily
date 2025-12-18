@@ -1,11 +1,18 @@
 mod game;
 
-use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, Key, ViewportBuilder};
-use eframe::{App, CreationContext, Frame, NativeOptions};
+use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, Key};
+use eframe::{App, CreationContext, Frame};
 
 use game::{GameState, OptionInfo};
 
+#[cfg(target_arch = "wasm32")]
+const EMBEDDED_FONT: &[u8] = include_bytes!("../web/fonts/NotoSansSC-Regular.ttf");
+
+// 桌面端入口
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
+    use eframe::{NativeOptions, egui::ViewportBuilder};
+    
     let options = NativeOptions {
         viewport: ViewportBuilder::default()
             .with_title("修仙编程游戏")
@@ -20,46 +27,87 @@ fn main() -> eframe::Result<()> {
     )
 }
 
+// Web 端入口
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    // 重定向 panic 到 console.error
+    console_error_panic_hook::set_once();
+    
+    // 启动 Web 应用
+    wasm_bindgen_futures::spawn_local(async {
+        eframe::WebRunner::new()
+            .start(
+                "xiuxian_canvas", // HTML canvas 元素 id
+                eframe::WebOptions::default(),
+                Box::new(|cc| Box::new(XiuxianApp::new(cc))),
+            )
+            .await
+            .expect("启动 eframe 失败");
+    });
+}
+
 /// 配置中文字体
+#[allow(unused_mut)]
 fn setup_chinese_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
 
-    // 尝试加载 macOS 系统中文字体
-    let font_paths = [
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/STHeiti Light.ttc",
-        "/System/Library/Fonts/Hiragino Sans GB.ttc",
-        "/Library/Fonts/Arial Unicode.ttf",
-    ];
+    // Web 端：使用内嵌字体，确保中文正常显示
+    #[cfg(target_arch = "wasm32")]
+    {
+        fonts
+            .font_data
+            .insert("embedded_chinese".to_owned(), FontData::from_static(EMBEDDED_FONT));
 
-    let mut font_loaded = false;
-    for path in &font_paths {
-        if let Ok(font_data) = std::fs::read(path) {
-            fonts.font_data.insert(
-                "chinese_font".to_owned(),
-                FontData::from_owned(font_data),
-            );
-            
-            // 将中文字体放在最前面
-            fonts
-                .families
-                .entry(FontFamily::Proportional)
-                .or_default()
-                .insert(0, "chinese_font".to_owned());
-            
-            fonts
-                .families
-                .entry(FontFamily::Monospace)
-                .or_default()
-                .insert(0, "chinese_font".to_owned());
-            
-            font_loaded = true;
-            break;
-        }
+        fonts
+            .families
+            .entry(FontFamily::Proportional)
+            .or_default()
+            .insert(0, "embedded_chinese".to_owned());
+
+        fonts
+            .families
+            .entry(FontFamily::Monospace)
+            .or_default()
+            .insert(0, "embedded_chinese".to_owned());
     }
 
-    if !font_loaded {
-        eprintln!("警告: 未能加载中文字体，中文可能无法正常显示");
+    // 桌面端：尝试加载系统中文字体
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let font_paths = [
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/STHeiti Light.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+            "/Library/Fonts/Arial Unicode.ttf",
+            // Windows
+            "C:\\Windows\\Fonts\\msyh.ttc",
+            "C:\\Windows\\Fonts\\simhei.ttf",
+            // Linux
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        ];
+
+        for path in &font_paths {
+            if let Ok(font_data) = std::fs::read(path) {
+                fonts.font_data.insert(
+                    "chinese_font".to_owned(),
+                    FontData::from_owned(font_data),
+                );
+                
+                fonts
+                    .families
+                    .entry(FontFamily::Proportional)
+                    .or_default()
+                    .insert(0, "chinese_font".to_owned());
+                
+                fonts
+                    .families
+                    .entry(FontFamily::Monospace)
+                    .or_default()
+                    .insert(0, "chinese_font".to_owned());
+                
+                break;
+            }
+        }
     }
 
     ctx.set_fonts(fonts);

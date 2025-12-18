@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>修仙编程游戏 - 程序员模拟器</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #1a1a2e;
+        }
+        
+        @font-face {
+            font-family: 'NotoSansSC';
+            src: url('./fonts/NotoSansSC-Regular.ttf') format('truetype');
+            font-weight: 400;
+            font-style: normal;
+            font-display: swap;
+        }
+        
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            font-family: 'NotoSansSC', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', sans-serif;
+        }
+        
+        #loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            font-family: 'NotoSansSC', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB', 'Noto Sans CJK SC', 'Source Han Sans SC', sans-serif;
+            font-size: 24px;
+            text-align: center;
+        }
+        
+        .spinner {
+            border: 4px solid #333;
+            border-top: 4px solid #00d4ff;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">
+        <div class="spinner"></div>
+        <p>正在加载修仙编程游戏...</p>
+        <p style="font-size: 14px; color: #888;">首次加载可能需要几秒钟</p>
+    </div>
+    
+    <canvas id="xiuxian_canvas"></canvas>
+    
+    <script type="module">
+        import init from './xiuxian_game.js';
+        
+        async function run() {
+            const loading = document.getElementById('loading');
+            try {
+                const wasmUrl = new URL('./xiuxian_game_bg.wasm', import.meta.url);
+                await init({ module_or_path: wasmUrl });
+                loading.style.display = 'none';
+            } catch (error) {
+                console.error('加载 WebAssembly 失败', error);
+                loading.innerHTML = 
+                    '<p style="color: #ff4444;">加载失败</p>' +
+                    '<p style="font-size: 14px;">' + (error?.message || error) + '</p>';
+            }
+        }
+        
+        run();
+    </script>
+</body>
+</html>
