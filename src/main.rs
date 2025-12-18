@@ -1,6 +1,6 @@
 mod game;
 
-use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, Key};
+use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, Key, Visuals};
 use eframe::{App, CreationContext, Frame};
 
 use game::{GameState, OptionInfo};
@@ -128,6 +128,14 @@ impl XiuxianApp {
             font_id.size *= 1.2; // 放大 20%
         });
         cc.egui_ctx.set_style(style);
+
+        let mut visuals = Visuals::dark();
+        visuals.override_text_color = Some(Color32::WHITE);
+        visuals.panel_fill = Color32::BLACK;
+        visuals.window_fill = Color32::BLACK;
+        visuals.extreme_bg_color = Color32::BLACK;
+        visuals.hyperlink_color = Color32::WHITE;
+        cc.egui_ctx.set_visuals(visuals);
         
         Self { game: GameApp::new() }
     }
@@ -213,7 +221,7 @@ impl XiuxianApp {
             for (idx, option) in options.iter().enumerate() {
                 let label = format!("选项 {}: {}", idx + 1, option.desc.replace('\n', " "));
                 if ui
-                    .add_enabled(can_choose, egui::Button::new(label).fill(Color32::from_rgb(32, 32, 48)))
+                    .add_enabled(can_choose, egui::Button::new(label))
                     .clicked()
                 {
                     self.game.apply_choice((idx + 1) as u8);
@@ -222,7 +230,7 @@ impl XiuxianApp {
 
             if !self.game.result_message.is_empty() {
                 ui.add_space(10.0);
-                ui.colored_label(Color32::LIGHT_YELLOW, &self.game.result_message);
+                ui.label(&self.game.result_message);
             }
 
             ui.add_space(14.0);
