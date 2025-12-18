@@ -1,2 +1,4 @@
 /target
 .DS_Store
+web/xiuxian_game.js
+web/xiuxian_game_bg.wasm
