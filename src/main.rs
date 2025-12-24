@@ -3,7 +3,7 @@ mod game;
 use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, Key, Visuals};
 use eframe::{App, CreationContext, Frame};
 
-use game::{GameState, OptionInfo};
+use game::{GameState, NpcDecision, OptionInfo};
 
 #[cfg(target_arch = "wasm32")]
 const EMBEDDED_FONT: &[u8] = include_bytes!("../web/fonts/NotoSansSC-Regular.ttf");
@@ -234,7 +234,13 @@ impl XiuxianApp {
             }
 
             ui.add_space(14.0);
-            let can_advance = matches!(self.game.phase, GamePhase::EventDisplay);
+            let can_advance = if let Some(state) = self.game.game_state.as_ref() {
+                matches!(self.game.phase, GamePhase::EventDisplay)
+                    && state.event_chosen_today
+                    && (state.today_weekly_event.is_none() || state.weekly_event_chosen_today)
+            } else {
+                false
+            };
             if ui
                 .add_enabled(can_advance, egui::Button::new("进入下一天"))
                 .clicked()
@@ -261,6 +267,133 @@ impl XiuxianApp {
                     }
                 });
         });
+    }
+
+    fn draw_npc_panel(&mut self, ui: &mut egui::Ui) {
+        ui.heading("🤝 每日 NPC");
+        ui.add_space(6.0);
+
+        let Some(_) = self.game.game_state.as_ref() else {
+            ui.label("开始游戏后可遇到 NPC");
+            return;
+        };
+
+        let (npc_snapshot, npc_message, active_event, player_alive) = {
+            let game_ref = self.game.game_state.as_ref().unwrap();
+            (
+                game_ref
+                    .today_npcs
+                    .iter()
+                    .map(|npc| {
+                        (
+                            npc.name.clone(),
+                            npc.description.clone(),
+                            npc.ai_model.clone(),
+                            npc.accept_option.summary.clone(),
+                            npc.reject_option.summary.clone(),
+                            npc.interacted,
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                game_ref.npc_interaction_message.clone(),
+                game_ref
+                    .npc_active_event
+                    .clone()
+                    .and_then(|active| {
+                        game_ref
+                            .today_npcs
+                            .get(active.npc_index)
+                            .map(|npc| {
+                                (
+                                    active.npc_index,
+                                    active.prompt.clone(),
+                                    npc.name.clone(),
+                                    npc.ai_model.clone(),
+                                    npc.accept_option.clone(),
+                                    npc.reject_option.clone(),
+                                    npc.interacted,
+                                )
+                            })
+                    }),
+                game_ref.player.is_alive,
+            )
+        };
+
+        ui.label("每位 NPC 都连接了自定义 AI 模型，随时抛出特殊事件。");
+
+        let phase_allows = matches!(
+            self.game.phase,
+            GamePhase::EventDisplay | GamePhase::WeeklyEventDisplay
+        );
+        let can_interact = player_alive && phase_allows;
+        if !player_alive {
+            ui.colored_label(Color32::RED, "你已离开公司，无法与 NPC 互动。");
+        } else if !phase_allows {
+            ui.label("当前阶段暂不支持 NPC 互动。");
+        }
+
+        if npc_snapshot.is_empty() {
+            ui.label("今天没有遇到 NPC");
+        } else {
+            for (idx, (name, desc, ai_model, accept_tip, reject_tip, interacted)) in
+                npc_snapshot.into_iter().enumerate()
+            {
+                ui.separator();
+                ui.label(format!("{} · {}", name, ai_model));
+                ui.label(desc);
+                ui.label(format!("同意：{}", accept_tip));
+                ui.label(format!("拒绝：{}", reject_tip));
+                if interacted {
+                    ui.colored_label(Color32::LIGHT_GREEN, "状态：已处理");
+                } else if ui
+                    .add_enabled(
+                        can_interact,
+                        egui::Button::new(format!("与 {} 的 AI 对话", name)),
+                    )
+                    .clicked()
+                {
+                    if let Some(game_state) = self.game.game_state.as_mut() {
+                        game_state.trigger_npc_event(idx);
+                    }
+                }
+            }
+        }
+
+        if let Some((_, prompt, name, ai_model, accept_option, reject_option, interacted)) =
+            active_event
+        {
+            ui.separator();
+            ui.label(format!("🎯 {} · {}", name, ai_model));
+            ui.label(prompt);
+            ui.label(format!("同意：{}", accept_option.summary));
+            ui.label(format!("拒绝：{}", reject_option.summary));
+
+            if !interacted {
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(can_interact, egui::Button::new("同意"))
+                        .clicked()
+                    {
+                        if let Some(game_state) = self.game.game_state.as_mut() {
+                            game_state.resolve_active_npc_event(NpcDecision::Accept);
+                        }
+                    }
+                    if ui
+                        .add_enabled(can_interact, egui::Button::new("拒绝"))
+                        .clicked()
+                    {
+                        if let Some(game_state) = self.game.game_state.as_mut() {
+                            game_state.resolve_active_npc_event(NpcDecision::Reject);
+                        }
+                    }
+                });
+            }
+        }
+
+        if !npc_message.is_empty() {
+            ui.separator();
+            ui.label(&npc_message);
+        }
     }
 
     fn draw_promotion(&mut self, ui: &mut egui::Ui) {
@@ -295,6 +428,15 @@ impl XiuxianApp {
 
 impl App for XiuxianApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
+        egui::SidePanel::right("npc_side_panel")
+            .resizable(true)
+            .default_width(320.0)
+            .min_width(240.0)
+            .show(ctx, |ui| {
+                ui.add_space(10.0);
+                self.draw_npc_panel(ui);
+            });
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.add_space(10.0);
             ui.heading("================ 修仙编程游戏 ================");

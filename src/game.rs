@@ -141,6 +141,50 @@ pub struct WeeklyEvent {
     pub shuffled_options: Vec<OptionInfo>,  // 打乱后的选项
 }
 
+/// NPC 互动信息
+#[derive(Debug, Clone)]
+pub struct NpcEncounter {
+    pub name: String,
+    pub description: String,
+    pub ai_model: String,
+    pub prompt_templates: Vec<String>,
+    pub accept_option: NpcOption,
+    pub reject_option: NpcOption,
+    pub interacted: bool,
+}
+
+/// NPC 选项结果
+#[derive(Debug, Clone)]
+pub struct NpcOption {
+    pub summary: String,
+    pub detail: String,
+    pub reward: (i32, i32), // (技能点, 压力值)
+}
+
+/// 当前激活的 NPC 事件
+#[derive(Debug, Clone)]
+pub struct NpcActiveEvent {
+    pub npc_index: usize,
+    pub prompt: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum NpcDecision {
+    Accept,
+    Reject,
+}
+
+impl NpcEncounter {
+    fn random_dialogue(&self) -> String {
+        use rand::seq::SliceRandom;
+        let mut rng = rand::thread_rng();
+        self.prompt_templates
+            .choose(&mut rng)
+            .cloned()
+            .unwrap_or_else(|| self.description.clone())
+    }
+}
+
 impl WeeklyEvent {
     /// 初始化并打乱选项
     #[allow(clippy::too_many_arguments)]
@@ -377,6 +421,10 @@ pub struct GameState {
     pub today_weekly_event: Option<WeeklyEvent>,  // 当周事件（如果有的话）
     pub event_chosen_today: bool,  // 今天是否已选择
     pub weekly_event_chosen_today: bool,  // 周事件是否已选择
+    pub npc_master: Vec<NpcEncounter>,
+    pub today_npcs: Vec<NpcEncounter>,
+    pub npc_interaction_message: String,
+    pub npc_active_event: Option<NpcActiveEvent>,
 }
 
 impl GameState {
@@ -384,6 +432,7 @@ impl GameState {
     pub fn new(name: String) -> Self {
         let daily_events = Self::create_daily_events();
         let weekly_events = Self::create_weekly_events();
+        let npc_master = Self::create_npcs();
         
         // 生成第一天的事件
         let mut today_event = daily_events[rand::random::<usize>() % daily_events.len()].clone();
@@ -391,7 +440,7 @@ impl GameState {
         today_event.reshuffle();
         let today_weekly_event = None;  // 第一天没有周事件
         
-        GameState {
+        let mut state = GameState {
             player: PlayerState::new(name),
             current_day: 1,
             current_week: 1,
@@ -402,7 +451,14 @@ impl GameState {
             today_weekly_event,
             event_chosen_today: false,
             weekly_event_chosen_today: false,
-        }
+            npc_master,
+            today_npcs: Vec::new(),
+            npc_interaction_message: String::new(),
+            npc_active_event: None,
+        };
+
+        state.refresh_today_npcs();
+        state
     }
 
     /// 创建10个每日事件
@@ -1077,6 +1133,269 @@ impl GameState {
         ]
     }
 
+    fn create_npcs() -> Vec<NpcEncounter> {
+        fn npc(
+            name: &str,
+            desc: &str,
+            ai_model: &str,
+            prompts: &[&str],
+            accept_summary: &str,
+            accept_detail: &str,
+            accept_reward: (i32, i32),
+            reject_summary: &str,
+            reject_detail: &str,
+            reject_reward: (i32, i32),
+        ) -> NpcEncounter {
+            NpcEncounter {
+                name: name.to_string(),
+                description: desc.to_string(),
+                ai_model: ai_model.to_string(),
+                prompt_templates: if prompts.is_empty() {
+                    vec![desc.to_string()]
+                } else {
+                    prompts.iter().map(|s| s.to_string()).collect()
+                },
+                accept_option: NpcOption {
+                    summary: accept_summary.to_string(),
+                    detail: accept_detail.to_string(),
+                    reward: accept_reward,
+                },
+                reject_option: NpcOption {
+                    summary: reject_summary.to_string(),
+                    detail: reject_detail.to_string(),
+                    reward: reject_reward,
+                },
+                interacted: false,
+            }
+        }
+
+        vec![
+            npc(
+                "摸鱼王大壮",
+                "据说掌握办公室摸鱼的72种姿势，声称不被老板发现是基本功。",
+                "摸鱼姿势生成模型",
+                &["大壮的AI雷达检测到公司监控盲区，建议今天去茶水间开展'灵感站会'。",
+                    "摸鱼模型推演出下午会有突击检查，你要不要加入他的隐秘排班？"],
+                "加入摸鱼联盟，获取灵感 + 保命技巧",
+                "你共享了自动摸鱼脚本，团队暗自感谢你。",
+                (2, -4),
+                "谢绝联盟，保持正经坐姿",
+                "你假装没看见，结果被排到最无聊的会议。",
+                (0, 2),
+            ),
+            npc(
+                "内卷仙子阿卷",
+                "每天凌晨四点还在写需求，自称'不卷会死'。",
+                "加班激励语言模型",
+                &["阿卷的AI助手生成了一份48小时冲刺路线图，等你签字。",
+                    "模型预测竞品今晚发版本，她想拉你一起连夜上线"],
+                "同意连夜冲刺，换取曝光机会",
+                "你们线上连麦到天亮，产品经理感动落泪。",
+                (4, 5),
+                "拒绝加班，守住生活底线",
+                "你婉拒后，她给你发来励志语录合集。",
+                (1, -2),
+            ),
+            npc(
+                "运维老李",
+                "机房常驻嘉宾，随身携带一包螺丝刀和枸杞保温杯。",
+                "故障预测模型",
+                &["老李的故障AI预警到晚高峰会有磁盘告警，问你要不要提前回滚。",
+                    "模型建议你们追加自愈脚本，他需要你一起写"],
+                "配合运维写自愈脚本",
+                "你和老李把脚本上线，晚上群里安静得出奇。",
+                (3, 1),
+                "忽略预警，祈祷没事",
+                "老李凌晨@你：'我就知道你不会信AI。'",
+                (-1, -3),
+            ),
+            npc(
+                "产品许愿师",
+                "声称只要对着 PRD 许愿，需求就会自己长出来。",
+                "需求幻觉模型",
+                &["许愿师的AI生成了三版互相矛盾的PRD，想让你选一个。",
+                    "模型预测用户最想要'智能许愿按钮'，他请你验证"],
+                "同意试做原型，探索黑科技",
+                "你做了交互demo，运营群里刷屏点赞。",
+                (2, 3),
+                "拒绝魔改，守住当前范围",
+                "你把PRD退回去，许愿师说要去拜访更懂技术的神仙。",
+                (0, -1),
+            ),
+            npc(
+                "咖啡机器人007",
+                "AI 咖啡机，能根据心情自动调配浓度。",
+                "情绪配方模型",
+                &["007检测到你心率过高，推荐'低压拿铁'。",
+                    "模型建议开通订阅制咖啡，为项目成员补给"],
+                "接受特调，顺便打包一桶给团队",
+                "咖啡香味弥漫，大家自动加了两个小时班。",
+                (1, -3),
+                "拒绝咖啡，改喝白开水",
+                "007发来一封长邮件，分析你水肿的风险。",
+                (0, 1),
+            ),
+            npc(
+                "玄学大师林玄",
+                "擅长在发布会前做仪式，据说成功率+80%。",
+                "发布会玄学大模型",
+                &["林玄的AI算卦认为今晚需要'零BUG咒语'，要你配合。",
+                    "模型推演：若加班磨代码+贴符，崩溃概率降到5%"],
+                "配合仪式并全量自测",
+                "你边贴符边跑测试，发布会真的稳了。",
+                (5, 5),
+                "拒绝玄学，坚持科学流程",
+                "林玄摇头说：'那今晚不要看群。'",
+                (2, 0),
+            ),
+            npc(
+                "HR郭",
+                "负责全员情绪体检，最懂谁在偷偷崩溃。",
+                "情绪洞察AI",
+                &["HR郭的模型检测到你组压力指数爆表，建议安排'午后复位会'。",
+                    "AI分析有人准备闪辞，她需要你一起做留人方案"],
+                "配合开展心理访谈",
+                "你设计匿名问卷，团队士气回升。",
+                (2, -3),
+                "推迟访谈，先做项目",
+                "郭在群里@你说'我们等你的反馈'，压力马上上来。",
+                (0, 3),
+            ),
+            npc(
+                "行政陈",
+                "掌管工位、预算、零食补给，座右铭是'流程即正义'。",
+                "资源编排模型",
+                &["行政陈用AI算出最优座位重排方案，想请你当试点。",
+                    "模型建议举办线下团建，但需要你的技术演讲撑场面"],
+                "同意配合重排与团建",
+                "你写脚本控制抽奖机，活动效果炸裂。",
+                (3, 2),
+                "拒绝折腾，维持现状",
+                "陈把物资优先级调低，你的工位降温器被回收。",
+                (-1, -2),
+            ),
+            npc(
+                "后勤林",
+                "全公司最会修打印机的人，也会焊主板。",
+                "设备自愈模型",
+                &["后勤林的模型报警：服务器机柜电流异常，想让你协助巡检。",
+                    "AI记录表明茶水间插排要爆，你要不要支援"],
+                "加入巡检，顺手写巡检脚本",
+                "你把异常日志可视化，后勤林夸你靠谱。",
+                (3, 4),
+                "拒绝支援，只求运气",
+                "晚上机柜真跳闸，你被临时叫醒救火。",
+                (-2, -5),
+            ),
+            npc(
+                "仓库卢",
+                "管理所有硬件库存，知道每根网线的归宿。",
+                "库存预测模型",
+                &["仓库卢的AI预测下周笔记本会缺货，问你要不要提前锁几台。",
+                    "模型提示线上活动要送周边，他想借你脚本数据做分配"],
+                "同意协助分配与锁货",
+                "你导出需求清单，仓库给你留了一台顶配。",
+                (2, 1),
+                "拒绝加单，照旧申请",
+                "卢把你排在审批队尾，说'AI推荐不支持你'。",
+                (-1, -1),
+            ),
+        ]
+    }
+
+    fn refresh_today_npcs(&mut self) {
+        use rand::{seq::SliceRandom, Rng};
+        let mut rng = rand::thread_rng();
+        let mut pool = self.npc_master.clone();
+        pool.shuffle(&mut rng);
+        let max_take = pool.len().min(3);
+        let take = if max_take == 0 {
+            0
+        } else {
+            rng.gen_range(1..=max_take)
+        };
+        self.today_npcs = pool
+            .into_iter()
+            .take(take)
+            .map(|mut npc| {
+                npc.interacted = false;
+                npc
+            })
+            .collect();
+        self.npc_interaction_message.clear();
+        self.npc_active_event = None;
+    }
+
+    pub fn trigger_npc_event(&mut self, index: usize) -> Option<String> {
+        if !self.player.is_alive {
+            self.npc_active_event = None;
+            self.npc_interaction_message = "你已离开公司，无法继续和 NPC 交互。".to_string();
+            return Some(self.npc_interaction_message.clone());
+        }
+
+        let npc = self.today_npcs.get(index)?.clone();
+        if npc.interacted {
+            self.npc_interaction_message = format!("{} 今天的请求已经处理完。", npc.name);
+            self.npc_active_event = None;
+            return Some(self.npc_interaction_message.clone());
+        }
+
+        let dialogue = npc.random_dialogue();
+        self.npc_active_event = Some(NpcActiveEvent {
+            npc_index: index,
+            prompt: dialogue.clone(),
+        });
+        self.npc_interaction_message = format!(
+            "{} · {}：{}\n\n同意：{}\n拒绝：{}",
+            npc.name,
+            npc.ai_model,
+            dialogue,
+            npc.accept_option.summary,
+            npc.reject_option.summary
+        );
+        Some(self.npc_interaction_message.clone())
+    }
+
+    pub fn resolve_active_npc_event(&mut self, decision: NpcDecision) -> Option<String> {
+        if !self.player.is_alive {
+            self.npc_active_event = None;
+            self.npc_interaction_message = "你已离开公司，无法继续和 NPC 交互。".to_string();
+            return Some(self.npc_interaction_message.clone());
+        }
+
+        let active = self.npc_active_event.clone()?;
+        let npc = self.today_npcs.get_mut(active.npc_index)?;
+        if npc.interacted {
+            self.npc_active_event = None;
+            self.npc_interaction_message = format!("{} 今天已经结束沟通。", npc.name);
+            return Some(self.npc_interaction_message.clone());
+        }
+
+        let (choice_label, option) = match decision {
+            NpcDecision::Accept => ("同意", npc.accept_option.clone()),
+            NpcDecision::Reject => ("拒绝", npc.reject_option.clone()),
+        };
+
+        npc.interacted = true;
+        let (skill, pressure) = option.reward;
+        self.player.gain_reward(skill, pressure);
+        self.player.add_history(
+            format!("【NPC】{} - {} ({})", npc.name, option.detail, choice_label),
+            skill,
+            pressure,
+        );
+
+        self.npc_interaction_message = format!(
+            "{}：{} | 技能{} | 压力{}",
+            npc.name,
+            option.summary,
+            format_delta(skill),
+            format_delta(pressure)
+        );
+        self.npc_active_event = None;
+        Some(self.npc_interaction_message.clone())
+    }
+
     /// 生成今天的随机每日事件
     pub fn get_today_event(&self) -> &DailyEvent {
         &self.today_event
@@ -1116,6 +1435,8 @@ impl GameState {
         } else {
             self.today_weekly_event = None;
         }
+
+        self.refresh_today_npcs();
     }
 
     /// 获取游戏进行时间（秒）
@@ -1130,5 +1451,13 @@ impl GameState {
         let minutes = (seconds % 3600) / 60;
         let secs = seconds % 60;
         format!("{}:{:02}:{:02}", hours, minutes, secs)
+    }
+}
+
+fn format_delta(value: i32) -> String {
+    if value >= 0 {
+        format!("+{}", value)
+    } else {
+        value.to_string()
     }
 }
